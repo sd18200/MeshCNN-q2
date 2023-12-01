@@ -306,16 +306,48 @@ def set_edge_lengths(mesh, edge_points=None):
     edge_lengths = np.linalg.norm(mesh.vs[edge_points[:, 0]] - mesh.vs[edge_points[:, 1]], ord=2, axis=1)
     mesh.edge_lengths = edge_lengths
 
+def calculate_edge_centroid(mesh, edge):
+    return (mesh.vs[edge[0]] + mesh.vs[edge[1]]) / 2
+
+def get_edge_and_shared_centroids(mesh, edge_id):
+    edge_points = mesh.edges[edge_id]
+    centroids = [calculate_edge_centroid(mesh, edge_points)]
+
+    shared_edges = mesh.gemm_edges[edge_id]  # Assuming this gives the IDs of the shared edges
+    for shared_edge_id in shared_edges:
+        if shared_edge_id != -1:  # Check if the shared edge is valid
+            shared_edge_points = mesh.edges[shared_edge_id]
+            centroids.append(calculate_edge_centroid(mesh, shared_edge_points))
+
+    # Ensure we always have 5 centroids (replicate the last one if fewer shared edges)
+    while len(centroids) < 5:
+        centroids.append(centroids[-1])
+
+    return np.array(centroids)
+
 def coordinate_feature(mesh, edge_points):
-    # midpoint
-    midpoints = (mesh.vs[edge_points[:, 0]] + mesh.vs[edge_points[:, 2]]) / 2
+    features = np.zeros((len(edge_points), 12))  # 12 features for each edge
 
-    features = np.zeros((edge_points.shape[0], 3))  # (750,3)
+    for edge_id, edge in enumerate(edge_points):
+        # Calculate centroid for the current edge
+        main_centroid = calculate_edge_centroid(mesh, edge[0:2])
 
-    # Different min/max/average for different axis
-    features[:, 0] = np.max(midpoints, axis=1)    
-    features[:, 1] = np.average(midpoints, axis=1)   
-    features[:, 2] = np.min(midpoints, axis=1)    
+        # Collect centroids for shared edges
+        shared_centroids = [calculate_edge_centroid(mesh, mesh.edges[shared_edge_id]) 
+                            for shared_edge_id in edge[2:] if shared_edge_id != -1]
+
+        # Ensure at least four shared centroids are present
+        while len(shared_centroids) < 4:
+            shared_centroids.append(shared_centroids[-1])
+
+        # Combine main edge centroid with shared centroids
+        all_centroids = np.array([main_centroid] + shared_centroids)
+
+        # Calculate features
+        features[edge_id, 0:3] = np.max(all_centroids, axis=0)    # Max for x, y, z
+        features[edge_id, 3:6] = np.average(all_centroids, axis=0)    # Min for x, y, z
+        features[edge_id, 6:9] = np.min(all_centroids, axis=0) # Median for x, y, z
+        features[edge_id, 9:12] = np.median(all_centroids, axis=0)  # Mean for x, y, z
 
     return features
 
